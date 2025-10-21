@@ -73,12 +73,11 @@ def _remove_duplicate_artists(artist_string: str) -> str:
     """
     if not artist_string:
         return ""
-
     # Normalize delimiters: replace ' and ' and ' & ' with ','
-    normalized_string = artist_string.replace(' and ', ',').replace(' & ', ',')
+    normalized_string = artist_string.replace(' and ', ', ').replace(' & ', ', ')
 
     # Split by comma, trim whitespace, and convert to lowercase for case-insensitive comparison
-    artists = [a.strip().lower() for a in normalized_string.split(',') if a.strip()]
+    artists = [a.strip() for a in normalized_string.split(', ') if a.strip()]
 
     # Use a set to keep track of seen artists to ensure uniqueness
     seen = set()
@@ -86,7 +85,7 @@ def _remove_duplicate_artists(artist_string: str) -> str:
 
     for artist_name in artists:
         if artist_name not in seen:
-            unique_artists.append(artist_name.title()) # Capitalize first letter of each word
+            unique_artists.append(artist_name)
             seen.add(artist_name)
 
     # Reconstruct the string with unique, properly capitalized artists
@@ -415,6 +414,7 @@ async def process_download(msg, bot, original_url, progress_msg, animation_task,
                     video_id = entry.get("id")
                     title = entry.get("title", "<unknown>")
                     artist = entry.get("artist", entry.get("uploader", "<unknown>"))
+                    artist = _remove_duplicate_artists(artist)
                     thumbnail_url = entry.get("thumbnail")
 
                     # Check if file is cached
@@ -557,6 +557,7 @@ async def process_download(msg, bot, original_url, progress_msg, animation_task,
                 video_id = info_dict.get("id")
                 title = info_dict.get("title", "<unknown>")
                 artist = info_dict.get("artist", info_dict.get("uploader", "<unknown>"))
+                artist = _remove_duplicate_artists(artist)
                 thumbnail_url = info_dict.get("thumbnail")
 
                 # Check if file is cached
