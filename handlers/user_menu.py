@@ -82,13 +82,25 @@ async def process_audio(audio_filepath, title, artist, thumbnail_url):
         min_dimension = min(width, height)
 
         # Calculate crop coordinates for centered square
-        left = ((width - min_dimension) // 2) * 1.122
-        top = ((height - min_dimension) // 2) * 1.122
-        right = (left + min_dimension) * 1.122
-        bottom = (top + min_dimension) * 1.122
+        left = (width - min_dimension) // 2
+        top = (height - min_dimension) // 2
+        right = left + min_dimension
+        bottom = top + min_dimension
 
         # Crop to square
         img = img.crop((left, top, right, bottom))
+
+        # Further crop the square to make it smaller
+        original_square_dim = img.size[0]  # Assuming it's already a square
+        target_square_dim = int(original_square_dim * (346 / 461))
+
+        # Calculate crop coordinates for the new smaller centered square
+        new_left = (original_square_dim - target_square_dim) // 2
+        new_top = (original_square_dim - target_square_dim) // 2
+        new_right = new_left + target_square_dim
+        new_bottom = new_top + target_square_dim
+
+        img = img.crop((new_left, new_top, new_right, new_bottom))
 
         thumbnail_bytes = BytesIO()
         img.save(thumbnail_bytes, format="JPEG")
