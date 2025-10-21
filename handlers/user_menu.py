@@ -13,7 +13,7 @@ from PIL import Image
 from mutagen.mp3 import MP3
 from mutagen.id3 import ID3, APIC, TIT2, TPE1
 from yt_dlp import YoutubeDL
-from db.db import Music
+from db.db import Music, Analytics
 # Add this near the top of your file, after imports
 import logging
 
@@ -39,6 +39,7 @@ if not os.path.exists(DOWNLOAD_DIR):
 
 # Initialize database
 db = Music()
+db_analytics = Analytics()
 
 # Create a thread pool for CPU-bound tasks
 thread_pool = concurrent.futures.ThreadPoolExecutor()
@@ -223,6 +224,18 @@ async def start(msg: Message):
 но разве это имеет значение? бот офигенен. пользуйся""", parse_mode='HTML')
 
 
+@router.message(Command(commands=["analytics"]))
+async def send_analytics(msg: Message):
+    if msg.from_user.id != 653632008:
+        await msg.delete()
+        return
+    await msg.delete()
+    analytics_msg = await msg.answer(f'бот использовался всего {db_analytics.get_total_use_count()} раз, {db_analytics.get_user_count()} уникальными пользователями')
+    await asyncio.sleep(5)
+    await analytics_msg.delete()
+
+
+
 @router.message(Command(commands=["cancel"]))
 async def cancel_downloads(msg: Message):
     user_id = msg.from_user.id
@@ -261,6 +274,7 @@ async def cancel_downloads(msg: Message):
 
 @router.message(F.chat.type.in_({ChatType.SUPERGROUP, ChatType.GROUP, ChatType.CHANNEL, ChatType.PRIVATE}))
 async def main(msg: Message, bot: Bot):
+    db_analytics.add_user(msg.from_user.id)
     if not msg.audio:
         await msg.delete()
     print(f"{msg.from_user.id} (@{msg.from_user.username}) requested {msg.text}")
@@ -289,6 +303,7 @@ async def main(msg: Message, bot: Bot):
             link_preview_options=LinkPreviewOptions(is_disabled=True),
             parse_mode="HTML",
         )
+        db_analytics.increment_use_count()
 
         # Create animation task and track it
         animation_task = asyncio.create_task(animate_starting_progress(progress_msg, original_url, bot))
