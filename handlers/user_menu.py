@@ -274,7 +274,6 @@ async def cancel_downloads(msg: Message):
 
 @router.message(F.chat.type.in_({ChatType.SUPERGROUP, ChatType.GROUP, ChatType.CHANNEL, ChatType.PRIVATE}))
 async def main(msg: Message, bot: Bot):
-    db_analytics.add_user(msg.from_user.id)
     if not msg.audio:
         await msg.delete()
     print(f"{msg.from_user.id} (@{msg.from_user.username}) requested {msg.text}")
@@ -303,6 +302,7 @@ async def main(msg: Message, bot: Bot):
             link_preview_options=LinkPreviewOptions(is_disabled=True),
             parse_mode="HTML",
         )
+        db_analytics.add_user(msg.from_user.id)
         db_analytics.increment_use_count()
 
         # Create animation task and track it
