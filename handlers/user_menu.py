@@ -66,6 +66,32 @@ async def download_video(url, ydl_opts):
         return await run_in_threadpool(ydl.extract_info, url, download=True)
 
 
+def _remove_duplicate_artists(artist_string: str) -> str:
+    """
+    Cleans an artist string by removing duplicate artist names.
+    Handles various delimiters like ',', ' and ', ' & '.
+    """
+    if not artist_string:
+        return ""
+
+    # Normalize delimiters: replace ' and ' and ' & ' with ','
+    normalized_string = artist_string.replace(' and ', ',').replace(' & ', ',')
+
+    # Split by comma, trim whitespace, and convert to lowercase for case-insensitive comparison
+    artists = [a.strip().lower() for a in normalized_string.split(',') if a.strip()]
+
+    # Use a set to keep track of seen artists to ensure uniqueness
+    seen = set()
+    unique_artists = []
+
+    for artist_name in artists:
+        if artist_name not in seen:
+            unique_artists.append(artist_name.title()) # Capitalize first letter of each word
+            seen.add(artist_name)
+
+    # Reconstruct the string with unique, properly capitalized artists
+    return ", ".join(unique_artists)
+
 async def process_audio(audio_filepath, title, artist, thumbnail_url):
     """Process the audio file with metadata and thumbnail."""
     async with aiohttp.ClientSession() as session:
@@ -125,7 +151,8 @@ async def process_audio(audio_filepath, title, artist, thumbnail_url):
             )
         )
         audio.tags.add(TIT2(encoding=3, text=title))  # Title
-        audio.tags.add(TPE1(encoding=3, text=artist))  # Artist
+        cleaned_artist = _remove_duplicate_artists(artist)
+        audio.tags.add(TPE1(encoding=3, text=cleaned_artist))  # Artist
         audio.save()
 
         return thumbnail_bytes.getvalue()
