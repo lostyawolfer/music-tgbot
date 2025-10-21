@@ -79,7 +79,6 @@ async def process_audio(audio_filepath, title, artist, thumbnail_url):
 
         # Crop to centered square
         width, height = img.size
-        height *= 0.76
         min_dimension = min(width, height)
 
         # Calculate crop coordinates for centered square
