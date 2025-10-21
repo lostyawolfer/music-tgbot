@@ -104,7 +104,7 @@ async def process_audio(audio_filepath, title, artist, thumbnail_url):
         img = img.crop((new_left, new_top, new_right, new_bottom))
 
         thumbnail_bytes = BytesIO()
-        img.save(thumbnail_bytes, format="JPEG")
+        img.save(thumbnail_bytes, format="PNG")
         thumbnail_bytes.seek(0)
 
         audio = MP3(audio_filepath, ID3=ID3)
@@ -118,7 +118,7 @@ async def process_audio(audio_filepath, title, artist, thumbnail_url):
         audio.tags.add(
             APIC(
                 encoding=3,  # UTF-8
-                mime="image/jpeg",
+                mime="image/PNG",
                 type=3,  # 3 is for Front Cover
                 desc="Cover",
                 data=thumbnail_bytes.getvalue(),
