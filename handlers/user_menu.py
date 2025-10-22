@@ -4,6 +4,7 @@ import re
 from io import BytesIO
 import aiohttp
 import concurrent.futures
+import unicodedata
 
 from aiogram import Router, Bot, F
 from aiogram.enums import ChatAction, ChatType
@@ -21,6 +22,7 @@ import logging
 yt_dlp_logger = logging.getLogger('yt_dlp')
 yt_dlp_logger.setLevel(logging.ERROR)
 
+
 class YtDlpFilter(logging.Filter):
     def filter(self, record):
         # Suppress HTTP 403 errors that are just informational
@@ -28,8 +30,8 @@ class YtDlpFilter(logging.Filter):
             return False
         return True
 
-yt_dlp_logger.addFilter(YtDlpFilter())
 
+yt_dlp_logger.addFilter(YtDlpFilter())
 
 router = Router()
 
@@ -92,6 +94,25 @@ def _remove_duplicate_artists(artist_string: str) -> str:
 
     # Reconstruct the string with unique, properly capitalized artists
     return ", ".join(unique_artists)
+
+
+def sanitize_filename(filename: str) -> str:
+    """
+    Sanitizes a string to be used as a filename.
+    Removes invalid characters and truncates to a reasonable length.
+    """
+    # Normalize Unicode characters to their closest ASCII equivalents
+    filename = unicodedata.normalize('NFKD', filename).encode('ascii', 'ignore').decode('utf-8')
+    # Remove invalid characters
+    filename = re.sub(r'[\\/:*?"<>|]', "", filename)
+    # Replace spaces with underscores or hyphens (optional, but good practice)
+    filename = filename.replace(" ", "_")
+    # Truncate to a reasonable length to avoid filesystem issues
+    max_length = 100
+    if len(filename) > max_length:
+        filename = filename[:max_length]
+    return filename
+
 
 async def process_audio(audio_filepath, title, artist, thumbnail_url):
     """Process the audio file with metadata and thumbnail."""
@@ -232,7 +253,7 @@ async def send_cached_audio(msg, bot, video_id, file_id, progress_msg):
 async def start(msg: Message):
     await msg.answer(
         """<b><u>lostya's youtube music downloader</u></b>
-этот бот сделан специально для @lostyawolfer но ты им тоже можешь пользоваться!
+этот бот сделан специально для @lostyawolfer но ты им тоже можешь пользоваться
 
 короче смысл такой. я слушаю музыку через телеграм. и меня достало что я не могу просто без ничего лишнего взять и скачать нужные мне музыки.
 этот бот решает эту проблему.
@@ -258,10 +279,10 @@ async def send_analytics(msg: Message):
         await msg.delete()
         return
     await msg.delete()
-    analytics_msg = await msg.answer(f'бот использовался всего {db_analytics.get_total_use_count()} раз, {db_analytics.get_user_count()} уникальными пользователями')
+    analytics_msg = await msg.answer(
+        f'бот использовался всего {db_analytics.get_total_use_count()} раз, {db_analytics.get_user_count()} уникальными пользователями')
     await asyncio.sleep(5)
     await analytics_msg.delete()
-
 
 
 @router.message(Command(commands=["cancel"]))
@@ -354,29 +375,32 @@ async def process_download(msg, bot, original_url, progress_msg, animation_task,
     """Process the download as a separate task that can be cancelled"""
     # Use semaphore to limit concurrent downloads
     async with download_semaphore:
-        try:
-            ydl_opts = {
-                "format": "bestaudio/best",
-                "postprocessors": [
-                    {
-                        "key": "FFmpegExtractAudio",
-                        "preferredcodec": "mp3",
-                        "preferredquality": "192",
-                    }
-                ],
-                "outtmpl": os.path.join(DOWNLOAD_DIR, "%(title)s.%(ext)s"),
-                "quiet": True,
-                "no_warnings": True,
-                "ignoreerrors": True,
-                "extract_flat": False,
-            }
+        # Define a temporary output template for yt-dlp to use video ID
+        # This simplifies cleanup and renaming later.
+        temp_ydl_opts = {
+            "format": "bestaudio/best",
+            "postprocessors": [
+                {
+                    "key": "FFmpegExtractAudio",
+                    "preferredcodec": "mp3",
+                    "preferredquality": "192",
+                }
+            ],
+            "outtmpl": os.path.join(DOWNLOAD_DIR, "%(id)s.%(ext)s"),  # Download using ID
+            "quiet": True,
+            "no_warnings": True,
+            "ignoreerrors": True,
+            "extract_flat": False,
+        }
 
+        # Track the temporary file paths created by yt-dlp
+        temp_audio_filepath = None
+
+        try:
             # Extract info without downloading first
-            with YoutubeDL(ydl_opts) as ydl:
-                # Replace the info extraction part with:
+            with YoutubeDL(temp_ydl_opts) as ydl:
                 try:
-                    with YoutubeDL(ydl_opts) as ydl:
-                        info_dict = await run_in_threadpool(ydl.extract_info, original_url, download=False)
+                    info_dict = await run_in_threadpool(ydl.extract_info, original_url, download=False)
                 except Exception as e:
                     print(f"Info extraction error (may be normal for cached content): {e}")
                     # If info extraction fails completely, we can't proceed
@@ -430,7 +454,11 @@ async def process_download(msg, bot, original_url, progress_msg, animation_task,
                         if await send_cached_audio(msg, bot, video_id, cached_file_id, progress_msg):
                             continue  # Skip to next item if cached version sent successfully
 
-                    audio_filepath = os.path.join(DOWNLOAD_DIR, f"{title}.mp3")
+                    # Original temporary path used by yt-dlp
+                    temp_audio_filepath = os.path.join(DOWNLOAD_DIR, f"{video_id}.mp3")
+                    # Desired final path with title
+                    cleaned_title = sanitize_filename(title)
+                    final_audio_filepath = os.path.join(DOWNLOAD_DIR, f"{cleaned_title}.mp3")
 
                     try:
                         try:
@@ -457,9 +485,29 @@ async def process_download(msg, bot, original_url, progress_msg, animation_task,
                             raise asyncio.CancelledError()
 
                         # Download asynchronously
-                        await download_video(video_url, ydl_opts)
+                        # Use the temp_ydl_opts here, so it downloads to {video_id}.mp3
+                        await download_video(video_url, temp_ydl_opts)
 
-                        if os.path.exists(audio_filepath) and thumbnail_url:
+                        if os.path.exists(temp_audio_filepath) and thumbnail_url:
+                            # --- RENAME THE FILE HERE ---
+                            try:
+                                if os.path.exists(final_audio_filepath):
+                                    # Handle potential duplicates if two videos have the exact same sanitized title
+                                    # For simplicity, we'll append a number. You might want a more robust solution.
+                                    base, ext = os.path.splitext(final_audio_filepath)
+                                    count = 1
+                                    while os.path.exists(f"{base}_{count}{ext}"):
+                                        count += 1
+                                    final_audio_filepath = f"{base}_{count}{ext}"
+
+                                os.rename(temp_audio_filepath, final_audio_filepath)
+                                print(f"Renamed {temp_audio_filepath} to {final_audio_filepath}")
+                            except Exception as e:
+                                print(f"Error renaming file {temp_audio_filepath} to {final_audio_filepath}: {e}")
+                                # Proceed with the temp_audio_filepath if rename fails
+                                final_audio_filepath = temp_audio_filepath
+                            # --- END RENAME ---
+
                             animation_task.cancel()
                             await progress_msg.edit_text(
                                 f"<blockquote>{original_url}</blockquote>\n✴️ плейлист: обработка...\n<i>({i + 1}/{len(entries)})</i> <b>{title}</b>",
@@ -477,8 +525,8 @@ async def process_download(msg, bot, original_url, progress_msg, animation_task,
                                 raise asyncio.CancelledError()
 
                             try:
-                                # Process audio asynchronously
-                                thumbnail_data = await process_audio(audio_filepath, title, artist, thumbnail_url)
+                                # Process audio asynchronously using the final_audio_filepath
+                                thumbnail_data = await process_audio(final_audio_filepath, title, artist, thumbnail_url)
 
                                 animation_task.cancel()
                                 await progress_msg.edit_text(
@@ -498,7 +546,7 @@ async def process_download(msg, bot, original_url, progress_msg, animation_task,
 
                                 sent_message = await bot.send_audio(
                                     chat_id=msg.chat.id,
-                                    audio=FSInputFile(audio_filepath),
+                                    audio=FSInputFile(final_audio_filepath),  # Use the final audio filepath
                                     title=title,
                                     performer=artist,
                                     thumbnail=BufferedInputFile(
@@ -525,8 +573,10 @@ async def process_download(msg, bot, original_url, progress_msg, animation_task,
                     except asyncio.CancelledError:
                         # Handle cancellation
                         print(f"Download cancelled for user {user_id}")
-                        if os.path.exists(audio_filepath):
-                            os.remove(audio_filepath)
+                        if os.path.exists(temp_audio_filepath):
+                            os.remove(temp_audio_filepath)
+                        if os.path.exists(final_audio_filepath) and final_audio_filepath != temp_audio_filepath:
+                            os.remove(final_audio_filepath)
                         raise  # Re-raise to exit the function
 
                     except Exception as e:
@@ -540,9 +590,14 @@ async def process_download(msg, bot, original_url, progress_msg, animation_task,
                         except Exception:
                             pass
                     finally:
-                        if os.path.exists(audio_filepath):
-                            os.remove(audio_filepath)
-                            print(f"Cleaned up {audio_filepath}")
+                        # Clean up both possible file paths
+                        if os.path.exists(temp_audio_filepath):
+                            os.remove(temp_audio_filepath)
+                            print(f"Cleaned up {temp_audio_filepath}")
+                        if os.path.exists(final_audio_filepath) and final_audio_filepath != temp_audio_filepath:
+                            os.remove(final_audio_filepath)
+                            print(f"Cleaned up {final_audio_filepath}")
+
                 # Delete the final progress message for the playlist after all items are sent
                 if animation_task and not animation_task.done():
                     animation_task.cancel()
@@ -569,7 +624,11 @@ async def process_download(msg, bot, original_url, progress_msg, animation_task,
                     if await send_cached_audio(msg, bot, video_id, cached_file_id, progress_msg):
                         return  # Exit if cached version sent successfully
 
-                audio_filepath = os.path.join(DOWNLOAD_DIR, f"{title}.mp3")
+                # Original temporary path used by yt-dlp
+                temp_audio_filepath = os.path.join(DOWNLOAD_DIR, f"{video_id}.mp3")
+                # Desired final path with title
+                cleaned_title = sanitize_filename(title)
+                final_audio_filepath = os.path.join(DOWNLOAD_DIR, f"{cleaned_title}.mp3")
 
                 await progress_msg.edit_text(
                     f"<blockquote>{original_url}</blockquote>\n⬇️ скачивание...",
@@ -585,9 +644,26 @@ async def process_download(msg, bot, original_url, progress_msg, animation_task,
                     raise asyncio.CancelledError()
 
                 # Download asynchronously
-                await download_video(original_url, ydl_opts)
+                # Use the temp_ydl_opts here, so it downloads to {video_id}.mp3
+                await download_video(original_url, temp_ydl_opts)
 
-                if os.path.exists(audio_filepath) and thumbnail_url:
+                if os.path.exists(temp_audio_filepath) and thumbnail_url:
+                    # --- RENAME THE FILE HERE ---
+                    try:
+                        if os.path.exists(final_audio_filepath):
+                            base, ext = os.path.splitext(final_audio_filepath)
+                            count = 1
+                            while os.path.exists(f"{base}_{count}{ext}"):
+                                count += 1
+                            final_audio_filepath = f"{base}_{count}{ext}"
+
+                        os.rename(temp_audio_filepath, final_audio_filepath)
+                        print(f"Renamed {temp_audio_filepath} to {final_audio_filepath}")
+                    except Exception as e:
+                        print(f"Error renaming file {temp_audio_filepath} to {final_audio_filepath}: {e}")
+                        final_audio_filepath = temp_audio_filepath
+                    # --- END RENAME ---
+
                     animation_task.cancel()
                     await progress_msg.edit_text(
                         f"<blockquote>{original_url}</blockquote>\n✴️ обработка...",
@@ -603,8 +679,8 @@ async def process_download(msg, bot, original_url, progress_msg, animation_task,
                         raise asyncio.CancelledError()
 
                     try:
-                        # Process audio asynchronously
-                        thumbnail_data = await process_audio(audio_filepath, title, artist, thumbnail_url)
+                        # Process audio asynchronously using the final_audio_filepath
+                        thumbnail_data = await process_audio(final_audio_filepath, title, artist, thumbnail_url)
 
                         animation_task.cancel()
                         await progress_msg.edit_text(
@@ -626,7 +702,7 @@ async def process_download(msg, bot, original_url, progress_msg, animation_task,
                         )
                         sent_message = await bot.send_audio(
                             chat_id=msg.chat.id,
-                            audio=FSInputFile(audio_filepath),
+                            audio=FSInputFile(final_audio_filepath),  # Use the final audio filepath
                             title=title,
                             performer=artist,
                             thumbnail=BufferedInputFile(
@@ -644,8 +720,10 @@ async def process_download(msg, bot, original_url, progress_msg, animation_task,
                     except asyncio.CancelledError:
                         # Handle cancellation
                         print(f"Download cancelled for user {user_id}")
-                        if os.path.exists(audio_filepath):
-                            os.remove(audio_filepath)
+                        if os.path.exists(temp_audio_filepath):
+                            os.remove(temp_audio_filepath)
+                        if os.path.exists(final_audio_filepath) and final_audio_filepath != temp_audio_filepath:
+                            os.remove(final_audio_filepath)
                         raise  # Re-raise to exit the function
 
                     except Exception as e:
@@ -683,7 +761,12 @@ async def process_download(msg, bot, original_url, progress_msg, animation_task,
             await error_msg.delete()
 
         finally:
-            if "audio_filepath" in locals() and os.path.exists(audio_filepath):
-                os.remove(audio_filepath)
-                print(f"Cleaned up {audio_filepath}")
+            # Ensure all temporary and final files are cleaned up
+            if temp_audio_filepath and os.path.exists(temp_audio_filepath):
+                os.remove(temp_audio_filepath)
+                print(f"Cleaned up {temp_audio_filepath}")
+            if final_audio_filepath and os.path.exists(
+                    final_audio_filepath) and final_audio_filepath != temp_audio_filepath:
+                os.remove(final_audio_filepath)
+                print(f"Cleaned up {final_audio_filepath}")
             print(f"{msg.from_user.id} (@{msg.from_user.username})'s request is complete")
