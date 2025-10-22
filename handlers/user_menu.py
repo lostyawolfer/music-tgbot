@@ -232,7 +232,7 @@ async def send_cached_audio(msg, bot, video_id, file_id, progress_msg):
 async def start(msg: Message):
     await msg.answer(
         """<b><u>lostya's youtube music downloader</u></b>
-этот бот сделан специально для @lostyawolfer но им ты тоже можешь пользоваться
+этот бот сделан специально для @lostyawolfer но ты им тоже можешь пользоваться!
 
 короче смысл такой. я слушаю музыку через телеграм. и меня достало что я не могу просто без ничего лишнего взять и скачать нужные мне музыки.
 этот бот решает эту проблему.
@@ -364,7 +364,7 @@ async def process_download(msg, bot, original_url, progress_msg, animation_task,
                         "preferredquality": "192",
                     }
                 ],
-                "outtmpl": os.path.join(DOWNLOAD_DIR, "%(id)s.%(ext)s"),
+                "outtmpl": os.path.join(DOWNLOAD_DIR, "%(title)s.%(ext)s"),
                 "quiet": True,
                 "no_warnings": True,
                 "ignoreerrors": True,
@@ -430,7 +430,7 @@ async def process_download(msg, bot, original_url, progress_msg, animation_task,
                         if await send_cached_audio(msg, bot, video_id, cached_file_id, progress_msg):
                             continue  # Skip to next item if cached version sent successfully
 
-                    audio_filepath = os.path.join(DOWNLOAD_DIR, f"{video_id}.mp3")
+                    audio_filepath = os.path.join(DOWNLOAD_DIR, f"{title}.mp3")
 
                     try:
                         try:
@@ -569,7 +569,7 @@ async def process_download(msg, bot, original_url, progress_msg, animation_task,
                     if await send_cached_audio(msg, bot, video_id, cached_file_id, progress_msg):
                         return  # Exit if cached version sent successfully
 
-                audio_filepath = os.path.join(DOWNLOAD_DIR, f"{video_id}.mp3")
+                audio_filepath = os.path.join(DOWNLOAD_DIR, f"{title}.mp3")
 
                 await progress_msg.edit_text(
                     f"<blockquote>{original_url}</blockquote>\n⬇️ скачивание...",
