@@ -78,6 +78,8 @@ def _remove_duplicate_artists(artist_string: str) -> str:
 
     # Split by comma, trim whitespace, and convert to lowercase for case-insensitive comparison
     artists = [a.strip() for a in normalized_string.split(', ') if a.strip()]
+    if not artists:
+        return ""
 
     # Use a set to keep track of seen artists to ensure uniqueness
     seen = set()
