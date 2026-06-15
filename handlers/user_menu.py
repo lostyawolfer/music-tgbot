@@ -10,6 +10,7 @@ from aiogram.types import Message, FSInputFile, BufferedInputFile, LinkPreviewOp
 from aiogram.exceptions import TelegramBadRequest
 
 from db.db import Music, Analytics
+from data.config import env_bool, env_int
 from modules.downloader import (
     yt_extract,
     make_ydl_opts,
@@ -49,6 +50,17 @@ YOUTUBE_REGEX = (
     r"([\w-]{11}|list=[\w-]{34})(?:\S+)?"
 )
 
+
+# ------------------------------------------------------------------------------
+# Premium (cookies) download rate limit
+# ------------------------------------------------------------------------------
+def premium_cooldown_seconds() -> int:
+    # RATE_LIMIT is interpreted as cooldown seconds between premium downloads per user.
+    # 0 / empty => disabled
+    return env_int("RATE_LIMIT", 0)
+
+def cookies_enabled() -> bool:
+    return env_bool("COOKIES_ENABLED", False)
 # ------------------------------------------------------------------------------
 # Task tracking
 # ------------------------------------------------------------------------------
@@ -210,6 +222,23 @@ async def process_single_video(
     ))
     track_task(user_id, anim_task)
 
+    # Premium rate limit (only when cookies mode is enabled)
+    if cookies_enabled():
+        cooldown = premium_cooldown_seconds()
+        wait = db_analytics.get_premium_wait_seconds(user_id, cooldown)
+        if wait > 0:
+            err_txt = f"⏳ лимит premium: подожди {wait} сек"
+            await safe_edit_text(
+                progress_msg,
+                f"{display_name}\n{err_txt} <i>15</i>",
+                link_preview_options=LinkPreviewOptions(is_disabled=True),
+                parse_mode="HTML",
+            )
+            await animate_countdown(progress_msg, err_txt, 15, display_name)
+            return
+        # Reserve the slot immediately to avoid bursts
+        db_analytics.mark_premium_download(user_id)
+
     try:
         ydl_opts = make_ydl_opts(vid_id, download_progress)
         await yt_extract(info.get("webpage_url", original_url), ydl_opts, download=True)
@@ -290,6 +319,11 @@ async def process_single_video(
 # ------------------------------------------------------------------------------
 # Update handle_url:
 async def handle_url(msg: Message, bot: Bot, original_url: str, user_id: int):
+    # yt-dlp is much more reliable when the URL has an explicit scheme.
+    # Users often paste `youtube.com/watch?v=...` without `https://`.
+    if original_url and not re.match(r'^https?://', original_url, re.IGNORECASE):
+        original_url = 'https://' + original_url.lstrip('/')
+
     is_playlist = "list=" in original_url or "/playlist" in original_url
 
     # For single videos, try DB check before ANY messages
@@ -322,10 +356,20 @@ async def handle_url(msg: Message, bot: Bot, original_url: str, user_id: int):
     async with download_semaphore:
         try:
             info = await yt_extract(original_url, make_ydl_opts(), download=False)
-        except Exception:
+        except Exception as e:
             start_anim.cancel()
             err_txt = "⛔️ не удалось получить информацию о видео"
-            await animate_countdown(progress_msg, err_txt, 15, original_url)
+            # Show a short error detail to make debugging possible.
+            details = html.escape(str(e))
+            try:
+                await progress_msg.edit_text(
+                    f"<blockquote>{original_url}</blockquote>\n{err_txt} <i>15</i>\n<pre><code>{details}</code></pre>",
+                    link_preview_options=LinkPreviewOptions(is_disabled=True),
+                    parse_mode="HTML",
+                )
+            except Exception:
+                pass
+            await animate_countdown(progress_msg, err_txt, 15, original_url, details)
             return
 
         start_anim.cancel()
