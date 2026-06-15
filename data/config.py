@@ -25,3 +25,9 @@ def env_int(key: str, default: int = 0) -> int:
         return int(str(v).strip())
     except Exception:
         return default
+
+def env_str(key: str, default: str = "") -> str:
+    v = configfile.get(key, None)
+    if v is None:
+        return default
+    return str(v).strip()

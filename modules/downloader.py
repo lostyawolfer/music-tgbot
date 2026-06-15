@@ -4,7 +4,7 @@ import logging
 from yt_dlp import YoutubeDL
 from typing import Any, Dict, Optional
 
-from data.config import env_bool, env_int, configfile
+from data.config import env_bool, env_str, configfile
 from .utils import run_in_threadpool, sanitize_filename
 
 yt_dlp_logger = logging.getLogger("yt_dlp")
@@ -26,15 +26,15 @@ def make_ydl_opts(video_id=None, progress_dict=None) -> Dict[str, Any]:
     """
     Default downloader options.
 
-    If COOKIES_ENABLED=true, this enables the setup that usually works for YouTube Music Premium:
-      - cookies from COOKIES_PATH
-      - JS runtime node (yt-dlp's EJS flow)
-      - allow remote component download for EJS from GitHub
-      - bgutil POT provider is picked up automatically if the plugin is installed and the service runs
-        on http://127.0.0.1:4416 (default).
+    Three independent toggles control the advanced yt-dlp features:
+      - COOKIES_ENABLED     → only sets cookiefile from COOKIES_PATH
+      - POT_PROVIDER        → enables bgutil POT provider (extractor arg)
+      - JS_RUNTIME          → sets js_runtimes + remote_components for EJS flow
     """
     cookies_enabled = env_bool("COOKIES_ENABLED", False)
-    cookies_path = str(configfile.get("COOKIES_PATH", "") or "").strip()
+    cookies_path = env_str("COOKIES_PATH")
+    pot_provider = env_bool("POT_PROVIDER", False)
+    js_runtime_raw = env_str("JS_RUNTIME")
 
     opts: Dict[str, Any] = {
         "format": "bestaudio",
@@ -51,14 +51,20 @@ def make_ydl_opts(video_id=None, progress_dict=None) -> Dict[str, Any]:
         "ignoreerrors": True,
     }
 
-    if cookies_enabled:
-        if cookies_path:
-            # yt-dlp option name used by CLI --cookies
-            opts["cookiefile"] = cookies_path
+    if cookies_enabled and cookies_path:
+        opts["cookiefile"] = cookies_path
 
-        # Equivalent to: --js-runtimes node --remote-components ejs:github
-        # (We explicitly set node to match the user's setup.)
-        opts["js_runtimes"] = {"node": {}}
+    if pot_provider:
+        opts.setdefault("extractor_args", {}).setdefault("youtube", {})
+        opts["extractor_args"]["youtube"]["pot_provider"] = ["bgutil"]
+
+    if js_runtime_raw:
+        parts = js_runtime_raw.split(":", 1)
+        alias = parts[0]
+        if len(parts) > 1:
+            opts["js_runtimes"] = {alias: parts[1]}
+        else:
+            opts["js_runtimes"] = {alias: {}}
         opts["remote_components"] = {"ejs:github"}
 
     if video_id and progress_dict is not None:
