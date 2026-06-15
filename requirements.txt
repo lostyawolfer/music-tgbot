@@ -23,4 +23,3 @@ typing_extensions
 urllib3
 yarl
 yt-dlp
-bgutil-ytdlp-pot-provider
